@@ -385,10 +385,7 @@ async function sendReply(){
     if(!p.question)document.getElementById('ai-reply').style.display='none';
   }catch{}
 }
-    const r=await fetch('/api/mentor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:JSON.stringify(aiConv)})});
-      const d=await r.json();
-      const raw=d.text||'{}';
-  if(calY===undefined){calY=now.getFullYear();calM=now.getMonth()}
+    (calY===undefined){calY=now.getFullYear();calM=now.getMonth()}
   document.getElementById('cal-month-label').textContent=`${calY}年${calM+1}月`;
   const ents=getEnt(),cells=document.getElementById('cal-cells');
   cells.innerHTML='';
@@ -418,9 +415,6 @@ function renderMoodChart(){
   }
   document.getElementById('mood-chart').innerHTML=html||'<div class="empty">まだ記録がありません</div>';
 }
-
-function changeMonth(dir){calM+=dir;if(calM>11){calM=0;calY++}if(calM<0){calM=11;calY--}renderCal()}
-
 function showPopup(k){
   const e=getEnt()[k];if(!e)return;
   const md=MOOD[e.mood]||{};
