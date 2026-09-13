@@ -355,9 +355,9 @@ async function callMentor(text,mood,mode,past){
   const sys=`あなたはリンさんの個人ジャーナルのAIメンターです。コーチングスタンスで：価値観・喜びの源泉を拾う、答えを教えない、深い問いかけをする。薄い共感は使わない。短く鋭く。過去と似たテーマがあれば引用。JSONのみ：{"body":"フィードバック（2〜4文）","question":"問いかけ1文"}`;
   aiConv.push({role:'user',content:`今日の日記（${mode}・${ml}）：\n${text}\n\n過去：\n${pt}`});
   try{
-    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:800,system:sys,messages:aiConv})});
+        const r=await fetch('/api/mentor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:JSON.stringify(aiConv)})});
     const d=await r.json();
-    const raw=d.content?.find(b=>b.type==='text')?.text||'{}';
+        const raw=d.text||'{}';
     aiConv.push({role:'assistant',content:raw});
     let p;try{p=JSON.parse(raw.replace(/```json|```/g,'').trim())}catch{p={body:raw,question:''}}
     document.getElementById('ai-body').textContent=p.body||'';
@@ -374,10 +374,9 @@ async function sendReply(){
   document.getElementById('ai-body').innerHTML+='<br><br><div class="ai-loading"><span></span><span></span><span></span></div>';
   const sys=`あなたはリンさんのAIメンターです。コーチングで深い気づきを促す。JSONのみ：{"body":"返答（1〜3文）","question":"次の問い（任意）"}`;
   try{
-    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:500,system:sys,messages:aiConv})});
+        const r=await fetch('/api/mentor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:JSON.stringify(aiConv)})});
     const d=await r.json();
-    const raw=d.content?.find(b=>b.type==='text')?.text||'{}';
-    aiConv.push({role:'assistant',content:raw});
+        const raw=d.text||'{}';
     let p;try{p=JSON.parse(raw.replace(/```json|```/g,'').trim())}catch{p={body:raw,question:''}}
     const be=document.getElementById('ai-body');
     be.innerHTML=be.innerHTML.replace(/<br><br><div class="ai-loading">[\s\S]*?<\/div>/,'');
@@ -386,9 +385,9 @@ async function sendReply(){
     if(!p.question)document.getElementById('ai-reply').style.display='none';
   }catch{}
 }
-
-function renderCal(){
-  const now=new Date();
+    const r=await fetch('/api/mentor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:JSON.stringify(aiConv)})});
+      const d=await r.json();
+      const raw=d.text||'{}';
   if(calY===undefined){calY=now.getFullYear();calM=now.getMonth()}
   document.getElementById('cal-month-label').textContent=`${calY}年${calM+1}月`;
   const ents=getEnt(),cells=document.getElementById('cal-cells');
@@ -471,9 +470,9 @@ async function genWeekly(days){
   const summary=entries.map(d=>`${d.day}: ${MOOD[d.entry.mood]?.label||d.entry.mood} — ${d.entry.text.slice(0,80)}`).join('\n');
   const sys=`あなたはリンさんのAIメンターです。週次コーチング：価値観・喜びの源泉・繰り返しパターンを拾う。JSONのみ：{"body":"週次フィードバック（3〜4文）","question":"問いかけ1文"}`;
   try{
-    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:600,system:sys,messages:[{role:'user',content:`今週：\n${summary}`}]})});
+        const r=await fetch('/api/mentor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:JSON.stringify(aiConv)})});
     const d=await r.json();
-    const raw=d.content?.find(b=>b.type==='text')?.text||'{}';
+        const raw=d.text||'{}';
     let p;try{p=JSON.parse(raw.replace(/```json|```/g,'').trim())}catch{p={body:raw,question:''}}
     document.getElementById('report-ai-body').textContent=p.body||'';
     document.getElementById('report-ai-q').textContent=p.question||'';
