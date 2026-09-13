@@ -385,7 +385,7 @@ async function sendReply(){
     if(!p.question)document.getElementById('ai-reply').style.display='none';
   }catch{}
 }
-    (calY===undefined){calY=now.getFullYear();calM=now.getMonth()}
+if    (calY===undefined){calY=now.getFullYear();calM=now.getMonth()}
   document.getElementById('cal-month-label').textContent=`${calY}年${calM+1}月`;
   const ents=getEnt(),cells=document.getElementById('cal-cells');
   cells.innerHTML='';
@@ -433,7 +433,6 @@ async function renderReport(){
     days.push({key:k,day:WDM[(d.getDay()+6)%7],entry:ents[k]});
   }
   const s=days[0].key.slice(5).replace('-','/'),en=days[6].key.slice(5).replace('-','/');
-  document.getElementById('report-range').textContent=`${s} 〜 ${en}`;
   let chart='';
   days.forEach(({day,entry})=>{
     const m=entry?(MOOD[entry.mood]||{pos:50,neg:50}):null;
