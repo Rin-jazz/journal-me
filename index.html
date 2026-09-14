@@ -400,8 +400,6 @@ if    (calY===undefined){calY=now.getFullYear();calM=now.getMonth()}
     cells.innerHTML+=`<div class="cal-cell${isT?' today':''}${e?' has-entry':''}" ${e?`onclick="showPopup('${k}')"`:''}><div class="cn">${d}</div>${e?`<div class="cm">${moodIcon(e.mood,12)}</div>`:''}</div>`;
   }
   renderMoodChart();
-}
-
 function renderMoodChart(){
   const ents=getEnt(),now=new Date();
   if(calY!==now.getFullYear()||calM!==now.getMonth()){document.getElementById('mood-chart').innerHTML='<div class="empty">今月の記録がありません</div>';return}
@@ -433,8 +431,6 @@ async function renderReport(){
     days.push({key:k,day:WDM[(d.getDay()+6)%7],entry:ents[k]});
   }
   const s=days[0].key.slice(5).replace('-','/'),en=days[6].key.slice(5).replace('-','/');
-  let chart='';
-  days.forEach(({day,entry})=>{
     const m=entry?(MOOD[entry.mood]||{pos:50,neg:50}):null;
     chart+=`<div class="chart-row"><span class="chart-label">${day}</span><div class="chart-track">${m?`<div class="chart-pos" style="width:${m.pos}%"></div><div class="chart-neg" style="width:${m.neg}%"></div>`:''}</div><div class="chart-icon">${entry?moodIcon(entry.mood,14):''}</div></div>`;
   });
