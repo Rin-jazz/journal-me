@@ -644,36 +644,52 @@ async function renderReport(){
   });
   document.getElementById('report-chart').innerHTML=chart;
   const allText=days.filter(d=>d.entry).map(d=>d.entry.text).join(' ');
-  if(allText){renderWC(allText);await genWeekly(days)}
+  if(allText){
+    document.getElementById('wordcloud').innerHTML='<div class="ai-loading"><span></span><span></span><span></span></div>';
+    await genWeekly(days,allText);
+  }
   else{document.getElementById('wordcloud').innerHTML='<div class="empty">今週の日記がありません</div>';document.getElementById('report-ai-body').textContent='今週の日記がありません。'}
 }
 
+function renderKeywordCloud(keywords){
+  const el=document.getElementById('wordcloud');
+  if(!keywords||!keywords.length){el.innerHTML='<div class="empty">まだデータがありません</div>';return}
+  const sorted=keywords.filter(k=>k&&k.word).sort((a,b)=>(b.weight||1)-(a.weight||1)).slice(0,14);
+  const max=sorted[0].weight||1,min=sorted[sorted.length-1].weight||1;
+  el.innerHTML=sorted.map(k=>{
+    const w=k.weight||1;
+    const r=(w-min)/Math.max(max-min,1);
+    const sz=Math.round(34+r*38);const fs=Math.round(11+r*9);const op=(0.65+r*0.35).toFixed(2);
+    return`<span class="wc-bubble" style="width:${sz}px;height:${sz}px;font-size:${fs}px;opacity:${op}">${k.word}</span>`;
+  }).join('');
+}
+
+/* 簡易フォールバック（Gemini接続に失敗した場合のみ使用） */
 function renderWC(text){
   const stop=new Set(['は','が','を','に','で','の','と','も','だ','た','て','い','な','か','し','れ','ら','こ','あ','ん','う','え','お','そ','さ','せ','す','って','から','ため','という','など','また','でも','ので','ます','です','ました','した','ない','する','ある','いる','いた','なる','なった','なって','思う','思い','思った','今日','今週','今','自分','こと','もの','とき']);
   const freq={};
   text.replace(/[、。！？\n\r]/g,' ').split(/[\s　]+/).forEach(w=>{w=w.trim();if(w.length>=2&&!stop.has(w))freq[w]=(freq[w]||0)+1});
-  const sorted=Object.entries(freq).sort((a,b)=>b[1]-a[1]).slice(0,14);
-  if(!sorted.length){document.getElementById('wordcloud').innerHTML='<div class="empty">まだデータがありません</div>';return}
-  const max=sorted[0][1],min=sorted[sorted.length-1][1];
-  document.getElementById('wordcloud').innerHTML=sorted.map(([w,c])=>{
-    const r=(c-min)/Math.max(max-min,1);
-    const sz=Math.round(34+r*38);const fs=Math.round(11+r*9);const op=(0.65+r*0.35).toFixed(2);
-    return`<span class="wc-bubble" style="width:${sz}px;height:${sz}px;font-size:${fs}px;opacity:${op}">${w}</span>`;
-  }).join('');
+  const sorted=Object.entries(freq).sort((a,b)=>b[1]-a[1]).slice(0,14).map(([word,c])=>({word,weight:c}));
+  renderKeywordCloud(sorted);
 }
 
-async function genWeekly(days){
+async function genWeekly(days,allText){
   const entries=days.filter(d=>d.entry);if(!entries.length)return;
   const summary=entries.map(d=>`${d.day}: ${MOOD[d.entry.mood]?.label||d.entry.mood} — ${d.entry.text.slice(0,80)}`).join('\n');
-  const sys=`あなたはリンさんの個人ジャーナルのAIメンターです。コーチングスタンスで、今週の日記から価値観・喜びの源泉・繰り返しパターンを拾ってください。薄い共感は使わない。短く鋭く。JSONのみで返答：{"body":"週次フィードバック（3〜4文）","question":"問いかけ1文"}\n\n今週の日記：\n${summary}`;
+  const sys=`あなたはリンさんの個人ジャーナルのAIメンターです。コーチングスタンスで、今週の日記から価値観・喜びの源泉・繰り返しパターンを拾ってください。薄い共感は使わない。短く鋭く。\n\nあわせて、今週の日記によく出てくる言葉・テーマ・概念を8〜14個抽出してください（単なる助詞や日付ではなく、意味のある単語・フレーズ。例：「転職不安」「パーソルキャリア」「軸」など）。weightは1〜5で重要度・頻度を表す。\n\nJSONのみで返答：{"body":"週次フィードバック（3〜4文）","question":"問いかけ1文","keywords":[{"word":"...","weight":1〜5}]}\n\n今週の日記：\n${summary}`;
   try{
     const r=await fetch('/api/mentor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:sys})});
     const d=await r.json();
     const raw=d.text||'{}';
-    let p;try{p=JSON.parse(raw.replace(/```json|```/g,'').trim())}catch{p={body:raw,question:''}}
+    let p;try{p=JSON.parse(raw.replace(/```json|```/g,'').trim())}catch{p={body:raw,question:'',keywords:[]}}
     document.getElementById('report-ai-body').textContent=p.body||'';
     document.getElementById('report-ai-q').textContent=p.question||'';
-  }catch{document.getElementById('report-ai-body').textContent='接続エラーが発生しました。'}
+    if(p.keywords&&p.keywords.length) renderKeywordCloud(p.keywords);
+    else renderWC(allText);
+  }catch{
+    document.getElementById('report-ai-body').textContent='接続エラーが発生しました。';
+    renderWC(allText);
+  }
 }
 
 function initHome(){
