@@ -56,3 +56,20 @@
    （自分で編集する場合：`index.html` 内の `PASTE_YOUR_GOOGLE_CLIENT_ID_HERE.apps.googleusercontent.com` を発行されたIDに置き換えるだけです）
 
 設定が終わると、アプリ右上に「🔗 Google未連携」ボタンが出て、タップするとGoogleログイン→MyOSのDriveの `14_journal/YYYY-MM/YYYY-MM-DD.md` に日記が自動保存されるようになります（既存の14_journalのMarkdown形式と同じフォーマットです）。
+
+---
+
+## ⑤ 既知の問題：Drive連携で `origin_mismatch` エラーが出る場合
+
+2026-09-16時点、OAuthクライアント作成直後に以下を全て確認したが解決しなかった：
+- Client ID・登録オリジン（`https://journal-me-rin-jazzs-projects.vercel.app`）は完全一致（実際にGoogleへ送られるリクエストURLを直接キャプチャして確認済み）
+- OAuth同意画面の「承認済みドメイン」に`journal-me-rin-jazzs-projects.vercel.app`が登録済み
+- テストユーザーに`rin09326@gmail.com`が登録済み、公開ステータスは「テスト中」
+
+設定はすべて正しいにもかかわらず`error 400: origin_mismatch`が出る場合、**Googleの新しいOAuthクライアント設定の反映待ち（数時間〜半日かかることがある、既知の挙動）**の可能性が高い。
+
+**次回再開時のチェック手順:**
+1. まず何もいじらず、リンさんのSafari/Chromeで `🔗 Google未連携` ボタンを再度タップして試す
+2. それでも`origin_mismatch`が出る場合、OAuthクライアントを一度削除して作り直す（新しいClient IDが発行されるので、`index.html`内の`GOOGLE_CLIENT_ID`を更新してpushする必要あり）
+3. 日記保存・AIメンター機能（Gemini）自体はDrive連携と独立して正常動作している。Drive連携が直らなくても他の機能は問題なく使える
+
