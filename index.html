@@ -64,8 +64,9 @@ body{background:linear-gradient(160deg,var(--grad-start) 0%,var(--grad-mid) 50%,
 .mode-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .mode-btn{padding:12px;border-radius:var(--radius-sm);border:1px solid rgba(255,255,255,0.5);background:rgba(255,255,255,0.4);font-size:12px;color:var(--text-sub);cursor:pointer;display:flex;align-items:center;gap:8px;font-family:var(--font);font-weight:300;letter-spacing:0.03em;transition:all 0.15s;backdrop-filter:blur(8px)}
 .mode-pip{width:7px;height:7px;border-radius:50%;background:var(--text-muted);flex-shrink:0;transition:all 0.15s}
-.mode-btn.sel{background:rgba(255,255,255,0.75);border-color:rgba(255,255,255,0.9);color:var(--accent)}
-.mode-btn.sel .mode-pip{background:var(--accent)}
+.mode-btn.sel{background:rgba(255,255,255,0.9);border:1.5px solid var(--accent);color:var(--accent);font-weight:500;box-shadow:0 3px 12px rgba(140,80,110,0.18);transform:translateY(-2px)}
+.mode-btn.sel .mode-pip{background:var(--accent);box-shadow:0 0 0 3px rgba(154,96,144,0.18)}
+.mode-btn.sel::after{content:'✓';margin-left:auto;font-size:11px;color:var(--accent)}
 
 /* テキストエリア */
 .journal-textarea{width:100%;border:none;background:transparent;font-size:15px;font-family:var(--font);font-weight:300;color:var(--text);line-height:1.85;resize:none;min-height:150px;outline:none}
@@ -203,6 +204,16 @@ body{background:linear-gradient(160deg,var(--grad-start) 0%,var(--grad-mid) 50%,
       </div>
     </div>
 
+    <div class="card" id="photo-card" style="display:none">
+      <div class="card-label">写真・絵</div>
+      <input type="file" id="photo-input" accept="image/*" style="display:none" onchange="handlePhotoSelect(event)">
+      <div id="photo-preview-wrap" style="display:none">
+        <img id="photo-preview" style="width:100%;border-radius:var(--radius-sm);display:block;margin-bottom:10px">
+        <button class="ai-reply-btn" style="margin:0" onclick="document.getElementById('photo-input').click()">別の写真に変更</button>
+      </div>
+      <button class="mode-btn" id="photo-pick-btn" style="width:100%;justify-content:center" onclick="document.getElementById('photo-input').click()">📷 写真・絵を選ぶ</button>
+    </div>
+
     <div class="card">
       <div class="card-label" id="textarea-label">今日のこと</div>
       <textarea class="journal-textarea" id="journal-text" placeholder="雑なメモでOK。思ったまま書いてください。"></textarea>
@@ -290,6 +301,7 @@ body{background:linear-gradient(160deg,var(--grad-start) 0%,var(--grad-mid) 50%,
     <div class="popup-handle"></div>
     <div class="popup-date" id="popup-date"></div>
     <div id="popup-mood-badge" class="popup-mood-badge"></div>
+    <img id="popup-photo" style="display:none;width:100%;border-radius:var(--radius-sm);margin-bottom:12px">
     <div class="popup-body" id="popup-body"></div>
   </div>
 </div>
@@ -304,6 +316,13 @@ const MOOD={
   hard:{pos:10,neg:90,label:'つらい',svg:'<circle cx="18" cy="18" r="17" fill="#C090D0"/><path d="M11 13 Q13 11 15 13" stroke="#fff" stroke-width="1.8" fill="none" stroke-linecap="round"/><path d="M21 13 Q23 11 25 13" stroke="#fff" stroke-width="1.8" fill="none" stroke-linecap="round"/><path d="M12 25 Q18 20 24 25" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round"/>'}
 };
 const WD=['日','月','火','水','木','金','土'];
+function parseAIJson(raw){
+  const cleaned=(raw||'').replace(/```json|```/g,'').trim();
+  try{return JSON.parse(cleaned)}catch{}
+  const m=cleaned.match(/\{[\s\S]*\}/);
+  if(m){try{return JSON.parse(m[0])}catch{}}
+  return {body:cleaned,question:'',keywords:[]};
+}
 const WDM=['月','火','水','木','金','土','日'];
 let selMood='',selMode='ふつう',calY,calM,aiConv=[];
 
@@ -406,12 +425,35 @@ function buildJournalMarkdown(dateKey,entry){
   const wd=WD[new Date(y,m-1,d).getDay()];
   const emoji=MOOD_EMOJI[entry.mood]||'';
   const label=MOOD_JP[entry.mood]||'';
-  let md=`# 📅 ${dateKey}（${wd}）\n\n## 🌡️ ムードスコア\n${emoji} ${label}\n\n## 💬 今日のできごと\n${entry.text||''}\n\n## 💭 思ったこと・感じたこと\n\n\n## 💡 気づき・学び\n\n\n## 🔁 明日の自分へ\n`;
+  let md=`# 📅 ${dateKey}（${wd}）\n\n## 🌡️ ムードスコア\n${emoji} ${label}\n`;
+  if(entry.photoFileName) md+=`\n## 📷 写真\n![${dateKey}の写真](${entry.photoFileName})\n`;
+  md+=`\n## 💬 今日のできごと\n${entry.text||''}\n\n## 💭 思ったこと・感じたこと\n\n\n## 💡 気づき・学び\n\n\n## 🔁 明日の自分へ\n`;
   if(entry.aiBody){
     md+=`\n---\n<!-- MyOS journal-app: mode=${entry.mode||''} -->\n## 🤖 AIメンターより\n${entry.aiBody}\n`;
     if(entry.aiQuestion) md+=`\n**問いかけ：** ${entry.aiQuestion}\n`;
   }
   return md;
+}
+async function uploadPhoto(parentId,filename,file,existingId){
+  const ct=file.type||'image/jpeg';
+  if(existingId){
+    await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${existingId}?uploadType=media`,{method:'PATCH',headers:{'Content-Type':ct},body:file});
+    return existingId;
+  }
+  const files=await listFiles(parentId);
+  const existing=files.find(x=>x.name===filename);
+  if(existing){
+    await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${existing.id}?uploadType=media`,{method:'PATCH',headers:{'Content-Type':ct},body:file});
+    return existing.id;
+  }
+  const cr=await driveFetch('https://www.googleapis.com/drive/v3/files',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:filename,parents:[parentId]})});
+  const cd=await cr.json();
+  await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${cd.id}?uploadType=media`,{method:'PATCH',headers:{'Content-Type':ct},body:file});
+  return cd.id;
+}
+function parsePhotoFromMd(text){
+  const m=text.match(/## 📷 写真\n!\[[^\]]*\]\(([^)]+)\)/);
+  return m?m[1]:null;
 }
 function parseMoodFromMd(text){
   const m=text.match(/## 🌡️[^\n]*\n([^\n]*)/);
@@ -445,14 +487,16 @@ async function pullMonth(y,m0){
       const mood=parseMoodFromMd(text)||'okay';
       const body=parseBodyFromMd(text);
       const mode=parseModeFromMd(text);
+      const photoFileName=parsePhotoFromMd(text);
+      const photoDriveId=photoFileName?(files.find(x=>x.name===photoFileName)?.id||null):null;
       const local=ents[dateKey];
-      ents[dateKey]={text:body,mood,mode,ts:local?.ts||Date.now(),source:'drive',driveFileId:f.id,driveMonthId:mfolder};
+      ents[dateKey]={text:body,mood,mode,ts:local?.ts||Date.now(),source:'drive',driveFileId:f.id,driveMonthId:mfolder,photoFileName:photoFileName||local?.photoFileName,photoDriveId:photoDriveId||local?.photoDriveId};
     }
     localStorage.setItem('j4',JSON.stringify(ents));
   }catch(e){console.warn('pullMonth failed',mk,e)}
 }
 
-async function syncEntryToDrive(dateKey){
+async function syncEntryToDrive(dateKey,photoFile){
   if(!accessToken) return;
   const e=getEnt()[dateKey];
   if(!e) return;
@@ -461,6 +505,12 @@ async function syncEntryToDrive(dateKey){
     const jroot=await ensureJournalRoot();
     const mk=dateKey.slice(0,7);
     const mfolder=await findOrCreateFolder(mk,jroot);
+    if(photoFile){
+      const ext=(photoFile.name.match(/\.[^.]+$/)||['.jpg'])[0].toLowerCase();
+      const photoFileName=`${dateKey}${ext}`;
+      const photoDriveId=await uploadPhoto(mfolder,photoFileName,photoFile,e.photoDriveId&&e.photoFileName===photoFileName?e.photoDriveId:null);
+      e.photoFileName=photoFileName;e.photoDriveId=photoDriveId;
+    }
     const md=buildJournalMarkdown(dateKey,e);
     const fileId=await upsertMarkdown(mfolder,`${dateKey}.md`,md,e.driveFileId);
     e.driveFileId=fileId;e.driveMonthId=mfolder;e.source='drive';
@@ -504,16 +554,30 @@ function showScreen(n){
 function selectMood(el){document.querySelectorAll('.mood-btn').forEach(b=>b.classList.remove('sel'));el.classList.add('sel');selMood=el.dataset.mood}
 function selectMode(el){
   document.querySelectorAll('.mode-btn').forEach(b=>b.classList.remove('sel'));el.classList.add('sel');selMode=el.dataset.mode;
-  const L={'ふつう':'今日のこと','ほめ日記':'できたこと＋ほめ言葉','感謝日記':'感謝3つ','写真・絵':'一枚と一言'};
+  const L={'ふつう':'今日のこと','ほめ日記':'できたこと＋ほめ言葉','感謝日記':'感謝3つ','写真・絵':'一言（任意）'};
   document.getElementById('textarea-label').textContent=L[selMode]||'今日のこと';
+  document.getElementById('photo-card').style.display=(selMode==='写真・絵')?'block':'none';
+}
+
+let selectedPhotoFile=null;
+function handlePhotoSelect(ev){
+  const f=ev.target.files&&ev.target.files[0];if(!f)return;
+  selectedPhotoFile=f;
+  const url=URL.createObjectURL(f);
+  document.getElementById('photo-preview').src=url;
+  document.getElementById('photo-preview-wrap').style.display='block';
+  document.getElementById('photo-pick-btn').style.display='none';
 }
 
 async function saveJournal(){
   const text=document.getElementById('journal-text').value.trim();
-  if(!text){showToast('日記を書いてください');return}
+  if(selMode==='写真・絵'){
+    if(!text&&!selectedPhotoFile&&!getEnt()[todayKey()]?.photoFileName){showToast('写真か一言を入れてください');return}
+  }else if(!text){showToast('日記を書いてください');return}
   if(!selMood){showToast('きぶんを選んでください');return}
   const key=todayKey();
-  saveEnt(key,{text,mood:selMood,mode:selMode,ts:Date.now()});
+  const prev=getEnt()[key]||{};
+  saveEnt(key,{...prev,text,mood:selMood,mode:selMode,ts:Date.now()});
   showToast('保存しました ✓');
   const card=document.getElementById('ai-card');
   card.style.display='block';
@@ -523,7 +587,8 @@ async function saveJournal(){
   card.scrollIntoView({behavior:'smooth'});
   aiConv=[];
   await callMentor(text,selMood,selMode,getPast(key));
-  await syncEntryToDrive(key);
+  await syncEntryToDrive(key,selectedPhotoFile);
+  selectedPhotoFile=null;
 }
 
 function getPast(tk){
@@ -546,7 +611,7 @@ async function callMentor(text,mood,mode,past){
     const d=await r.json();
     const raw=d.text||'{}';
     aiConv.push({role:'assistant',content:raw});
-    let p;try{p=JSON.parse(raw.replace(/```json|```/g,'').trim())}catch{p={body:raw,question:''}}
+    let p=parseAIJson(raw);
     document.getElementById('ai-body').textContent=p.body||'';
     document.getElementById('ai-question').textContent=p.question||'';
     if(p.question)document.getElementById('ai-reply').style.display='block';
@@ -567,7 +632,7 @@ async function sendReply(){
     const d=await r.json();
     const raw=d.text||'{}';
     aiConv.push({role:'assistant',content:raw});
-    let p;try{p=JSON.parse(raw.replace(/```json|```/g,'').trim())}catch{p={body:raw,question:''}}
+    let p=parseAIJson(raw);
     const be=document.getElementById('ai-body');
     be.innerHTML=be.innerHTML.replace(/<br><br><div class="ai-loading">[\s\S]*?<\/div>/,'');
     be.innerHTML+=`<br><br>${p.body||''}`;
@@ -620,6 +685,12 @@ function showPopup(k){
   document.getElementById('popup-date').textContent=dlabel(k);
   document.getElementById('popup-mood-badge').innerHTML=`${moodIcon(e.mood,18)}<span class="popup-mood-label">${md.label||''}</span>`;
   document.getElementById('popup-body').textContent=e.text;
+  const img=document.getElementById('popup-photo');
+  img.style.display='none';img.removeAttribute('src');
+  if(e.photoFileName&&e.photoDriveId&&accessToken){
+    driveFetch(`https://www.googleapis.com/drive/v3/files/${e.photoDriveId}?alt=media`)
+      .then(r=>r.blob()).then(b=>{img.src=URL.createObjectURL(b);img.style.display='block'}).catch(()=>{});
+  }
   document.getElementById('popup-bg').classList.add('show');
 }
 function closePopup(){document.getElementById('popup-bg').classList.remove('show')}
@@ -681,7 +752,7 @@ async function genWeekly(days,allText){
     const r=await fetch('/api/mentor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:sys})});
     const d=await r.json();
     const raw=d.text||'{}';
-    let p;try{p=JSON.parse(raw.replace(/```json|```/g,'').trim())}catch{p={body:raw,question:'',keywords:[]}}
+    let p=parseAIJson(raw);
     document.getElementById('report-ai-body').textContent=p.body||'';
     document.getElementById('report-ai-q').textContent=p.question||'';
     if(p.keywords&&p.keywords.length) renderKeywordCloud(p.keywords);
@@ -697,10 +768,28 @@ function initHome(){
   document.getElementById('home-date').textContent=`${now.getMonth()+1}月${now.getDate()}日（${WD[now.getDay()]}）`;
   const key=todayKey(),ents=getEnt();
   if(ents[key]){
-    document.getElementById('journal-text').value=ents[key].text;
+    const e=ents[key];
+    document.getElementById('journal-text').value=e.text;
     document.getElementById('home-sub').textContent='今日の日記 ― 編集できます';
-    selMood=ents[key].mood;
+    selMood=e.mood;
     document.querySelectorAll('.mood-btn').forEach(b=>{if(b.dataset.mood===selMood)b.classList.add('sel')});
+    if(e.mode){
+      selMode=e.mode;
+      document.querySelectorAll('.mode-btn').forEach(b=>{b.classList.toggle('sel',b.dataset.mode===selMode)});
+      const L={'ふつう':'今日のこと','ほめ日記':'できたこと＋ほめ言葉','感謝日記':'感謝3つ','写真・絵':'一言（任意）'};
+      document.getElementById('textarea-label').textContent=L[selMode]||'今日のこと';
+    }
+    if(selMode==='写真・絵'){
+      document.getElementById('photo-card').style.display='block';
+      if(e.photoFileName&&e.photoDriveId&&accessToken){
+        driveFetch(`https://www.googleapis.com/drive/v3/files/${e.photoDriveId}?alt=media`)
+          .then(r=>r.blob()).then(b=>{
+            document.getElementById('photo-preview').src=URL.createObjectURL(b);
+            document.getElementById('photo-preview-wrap').style.display='block';
+            document.getElementById('photo-pick-btn').style.display='none';
+          }).catch(()=>{});
+      }
+    }
   }
   const w=new Date(now);w.setDate(w.getDate()-7);
   const wk=`${w.getFullYear()}-${String(w.getMonth()+1).padStart(2,'0')}-${String(w.getDate()).padStart(2,'0')}`;

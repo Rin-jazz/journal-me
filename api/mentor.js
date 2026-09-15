@@ -28,7 +28,7 @@ module.exports = async function handler(req, res) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.8, maxOutputTokens: 800 }
+        generationConfig: { temperature: 0.8, maxOutputTokens: 1536, responseMimeType: 'application/json' }
       })
     });
     const d = await r.json();
