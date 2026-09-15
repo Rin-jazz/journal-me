@@ -10,6 +10,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@300;400;500&display=swap" rel="stylesheet">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <title>journal</title>
 <style>
 :root{
@@ -148,9 +149,15 @@ body{background:linear-gradient(160deg,var(--grad-start) 0%,var(--grad-mid) 50%,
 .toast{position:fixed;bottom:100px;left:50%;transform:translateX(-50%);background:rgba(42,24,48,0.85);backdrop-filter:blur(10px);color:#fff;font-size:12px;padding:10px 20px;border-radius:30px;opacity:0;transition:opacity 0.3s;pointer-events:none;white-space:nowrap;z-index:300;font-family:var(--font);letter-spacing:0.04em}
 .toast.show{opacity:1}
 .empty{text-align:center;padding:24px;color:var(--text-muted);font-size:13px;line-height:1.7;font-weight:300}
+
+/* Drive連携ボタン */
+.drive-btn{position:fixed;top:calc(14px + env(safe-area-inset-top));right:14px;z-index:150;background:rgba(255,255,255,0.22);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.4);color:#fff;font-size:10px;padding:6px 12px;border-radius:20px;font-family:var(--font);font-weight:300;cursor:pointer;letter-spacing:0.03em;max-width:calc(480px - 28px)}
+.drive-btn.connected{background:rgba(255,255,255,0.8);color:var(--accent);border-color:rgba(255,255,255,0.9);font-weight:500}
+.drive-btn.syncing{opacity:0.7}
 </style>
 </head>
 <body>
+<button class="drive-btn" id="drive-btn" onclick="connectDrive()">🔗 Google未連携</button>
 <div id="app">
 
   <!-- HOME -->
@@ -300,6 +307,185 @@ const WD=['日','月','火','水','木','金','土'];
 const WDM=['月','火','水','木','金','土','日'];
 let selMood='',selMode='ふつう',calY,calM,aiConv=[];
 
+/* ==================== Google Drive 連携（MyOS 14_journal/ をDBとして使う） ==================== */
+const GOOGLE_CLIENT_ID = 'PASTE_YOUR_GOOGLE_CLIENT_ID_HERE.apps.googleusercontent.com';
+const MOOD_EMOJI={great:'😄',good:'🙂',okay:'😐',down:'😔',hard:'😞'};
+const EMOJI_MOOD={'😄':'great','🙂':'good','😐':'okay','😔':'down','😞':'hard'};
+const MOOD_JP={great:'最高',good:'よい',okay:'ふつう',down:'しんどい',hard:'つらい'};
+let accessToken=null, tokenClient=null, driveIds={myos:null,journal:null}, pulledMonths=new Set();
+
+function driveConfigured(){return GOOGLE_CLIENT_ID && !GOOGLE_CLIENT_ID.includes('PASTE_YOUR')}
+
+function setDriveBtn(state){
+  const b=document.getElementById('drive-btn');
+  if(!driveConfigured()){b.textContent='⚙️ Drive未設定';b.classList.remove('connected','syncing');return}
+  if(state==='connected'){b.textContent='☁️ Drive連携中';b.classList.add('connected');b.classList.remove('syncing')}
+  else if(state==='syncing'){b.textContent='☁️ 同期中…';b.classList.add('connected','syncing')}
+  else{b.textContent='🔗 Google未連携';b.classList.remove('connected','syncing')}
+}
+
+function initGIS(){
+  if(!driveConfigured()||!window.google) return;
+  tokenClient=google.accounts.oauth2.initTokenClient({
+    client_id:GOOGLE_CLIENT_ID,
+    scope:'https://www.googleapis.com/auth/drive',
+    callback:async(resp)=>{
+      if(resp.error){showToast('Google連携に失敗しました');return}
+      accessToken=resp.access_token;
+      localStorage.setItem('gdrive_connected','1');
+      setDriveBtn('connected');
+      await onDriveConnected();
+    }
+  });
+  if(localStorage.getItem('gdrive_connected')==='1'){
+    try{tokenClient.requestAccessToken({prompt:''})}catch(e){}
+  }
+}
+
+function connectDrive(){
+  if(!driveConfigured()){showToast('Google Client IDが未設定です（SETUP.md参照）');return}
+  if(!tokenClient){showToast('読み込み中…もう一度タップしてください');initGIS();return}
+  tokenClient.requestAccessToken({prompt:accessToken?'':'consent'});
+}
+
+async function driveFetch(url,opts={}){
+  opts.headers=Object.assign({Authorization:'Bearer '+accessToken},opts.headers||{});
+  const r=await fetch(url,opts);
+  if(r.status===401){accessToken=null;setDriveBtn('idle');throw new Error('reauth_required')}
+  return r;
+}
+
+async function findFolder(name,parentId){
+  const q=encodeURIComponent(`name='${name.replace(/'/g,"\\'")}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+  const r=await driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`);
+  const d=await r.json();
+  return (d.files&&d.files[0])?d.files[0].id:null;
+}
+async function findOrCreateFolder(name,parentId){
+  const existing=await findFolder(name,parentId);
+  if(existing) return existing;
+  const cr=await driveFetch('https://www.googleapis.com/drive/v3/files',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,mimeType:'application/vnd.google-apps.folder',parents:[parentId]})});
+  const cd=await cr.json();
+  return cd.id;
+}
+async function ensureJournalRoot(){
+  if(driveIds.journal) return driveIds.journal;
+  driveIds.myos=await findOrCreateFolder('MyOS','root');
+  driveIds.journal=await findOrCreateFolder('14_journal',driveIds.myos);
+  return driveIds.journal;
+}
+async function listFiles(parentId){
+  const r=await driveFetch(`https://www.googleapis.com/drive/v3/files?q='${parentId}' in parents and trashed=false&fields=files(id,name,mimeType)&pageSize=200`);
+  const d=await r.json();
+  return d.files||[];
+}
+async function readFileContent(fileId){
+  const r=await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
+  return await r.text();
+}
+async function upsertMarkdown(parentId,filename,content,existingId){
+  if(existingId){
+    await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${existingId}?uploadType=media`,{method:'PATCH',headers:{'Content-Type':'text/markdown; charset=UTF-8'},body:content});
+    return existingId;
+  }
+  const found=await (async()=>{const files=await listFiles(parentId);const f=files.find(x=>x.name===filename);return f?f.id:null})();
+  if(found){
+    await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${found}?uploadType=media`,{method:'PATCH',headers:{'Content-Type':'text/markdown; charset=UTF-8'},body:content});
+    return found;
+  }
+  const boundary='myos_journal_boundary_xyz';
+  const metadata={name:filename,parents:[parentId],mimeType:'text/markdown'};
+  const body=`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: text/markdown; charset=UTF-8\r\n\r\n${content}\r\n--${boundary}--`;
+  const r=await driveFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',{method:'POST',headers:{'Content-Type':`multipart/related; boundary=${boundary}`},body});
+  const d=await r.json();
+  return d.id;
+}
+
+function buildJournalMarkdown(dateKey,entry){
+  const[y,m,d]=dateKey.split('-').map(Number);
+  const wd=WD[new Date(y,m-1,d).getDay()];
+  const emoji=MOOD_EMOJI[entry.mood]||'';
+  const label=MOOD_JP[entry.mood]||'';
+  let md=`# 📅 ${dateKey}（${wd}）\n\n## 🌡️ ムードスコア\n${emoji} ${label}\n\n## 💬 今日のできごと\n${entry.text||''}\n\n## 💭 思ったこと・感じたこと\n\n\n## 💡 気づき・学び\n\n\n## 🔁 明日の自分へ\n`;
+  if(entry.aiBody){
+    md+=`\n---\n<!-- MyOS journal-app: mode=${entry.mode||''} -->\n## 🤖 AIメンターより\n${entry.aiBody}\n`;
+    if(entry.aiQuestion) md+=`\n**問いかけ：** ${entry.aiQuestion}\n`;
+  }
+  return md;
+}
+function parseMoodFromMd(text){
+  const m=text.match(/## 🌡️[^\n]*\n([^\n]*)/);
+  if(!m) return null;
+  for(const emo in EMOJI_MOOD){if(m[1].includes(emo)) return EMOJI_MOOD[emo]}
+  return null;
+}
+function parseBodyFromMd(text){
+  const m=text.match(/## 💬 今日のできごと\n([\s\S]*?)\n## /);
+  return m?m[1].trim():'';
+}
+function parseModeFromMd(text){
+  const m=text.match(/mode=([^\s]*)\s*-->/);
+  return m?m[1]:'ふつう';
+}
+
+async function pullMonth(y,m0){
+  const mk=`${y}-${String(m0+1).padStart(2,'0')}`;
+  if(pulledMonths.has(mk)||!accessToken) return;
+  try{
+    const jroot=await ensureJournalRoot();
+    const mfolder=await findFolder(mk,jroot);
+    pulledMonths.add(mk);
+    if(!mfolder) return;
+    const files=await listFiles(mfolder);
+    const ents=getEnt();
+    for(const f of files){
+      if(!f.name.endsWith('.md')) continue;
+      const dateKey=f.name.replace('.md','');
+      const text=await readFileContent(f.id);
+      const mood=parseMoodFromMd(text)||'okay';
+      const body=parseBodyFromMd(text);
+      const mode=parseModeFromMd(text);
+      const local=ents[dateKey];
+      ents[dateKey]={text:body,mood,mode,ts:local?.ts||Date.now(),source:'drive',driveFileId:f.id,driveMonthId:mfolder};
+    }
+    localStorage.setItem('j4',JSON.stringify(ents));
+  }catch(e){console.warn('pullMonth failed',mk,e)}
+}
+
+async function syncEntryToDrive(dateKey){
+  if(!accessToken) return;
+  const e=getEnt()[dateKey];
+  if(!e) return;
+  setDriveBtn('syncing');
+  try{
+    const jroot=await ensureJournalRoot();
+    const mk=dateKey.slice(0,7);
+    const mfolder=await findOrCreateFolder(mk,jroot);
+    const md=buildJournalMarkdown(dateKey,e);
+    const fileId=await upsertMarkdown(mfolder,`${dateKey}.md`,md,e.driveFileId);
+    e.driveFileId=fileId;e.driveMonthId=mfolder;e.source='drive';
+    saveEnt(dateKey,e);
+    pulledMonths.add(mk);
+    setDriveBtn('connected');
+  }catch(err){
+    console.warn('sync failed',err);
+    setDriveBtn('connected');
+    showToast('Driveへの保存に失敗（ローカルには保存済み）');
+  }
+}
+
+async function onDriveConnected(){
+  const now=new Date();
+  await pullMonth(now.getFullYear(),now.getMonth());
+  const prev=new Date(now);prev.setMonth(prev.getMonth()-1);
+  await pullMonth(prev.getFullYear(),prev.getMonth());
+  initHome();
+  if(document.getElementById('screen-calendar').classList.contains('active')) renderCal();
+  if(document.getElementById('screen-report').classList.contains('active')) renderReport();
+}
+window.addEventListener('load',()=>{setDriveBtn('idle');setTimeout(initGIS,300)});
+/* ==================== /Google Drive 連携 ==================== */
+
 function todayKey(){const d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
 function getEnt(){try{return JSON.parse(localStorage.getItem('j4')||'{}')}catch{return{}}}
 function saveEnt(k,v){const e=getEnt();e[k]=v;localStorage.setItem('j4',JSON.stringify(e))}
@@ -337,6 +523,7 @@ async function saveJournal(){
   card.scrollIntoView({behavior:'smooth'});
   aiConv=[];
   await callMentor(text,selMood,selMode,getPast(key));
+  await syncEntryToDrive(key);
 }
 
 function getPast(tk){
@@ -355,7 +542,7 @@ async function callMentor(text,mood,mode,past){
   const sys=`あなたはリンさんの個人ジャーナルのAIメンターです。コーチングスタンスで：価値観・喜びの源泉を拾う、答えを教えない、深い問いかけをする。薄い共感は使わない。短く鋭く。過去と似たテーマがあれば引用。JSONのみ：{"body":"フィードバック（2〜4文）","question":"問いかけ1文"}`;
   aiConv.push({role:'user',content:`今日の日記（${mode}・${ml}）：\n${text}\n\n過去：\n${pt}`});
   try{
-    const r=await fetch('/api/mentor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:JSON.stringify(aiConv)})});
+    const r=await fetch('/api/mentor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:sys+'\n\n会話ログ（JSON）：\n'+JSON.stringify(aiConv)})});
     const d=await r.json();
     const raw=d.text||'{}';
     aiConv.push({role:'assistant',content:raw});
@@ -363,6 +550,8 @@ async function callMentor(text,mood,mode,past){
     document.getElementById('ai-body').textContent=p.body||'';
     document.getElementById('ai-question').textContent=p.question||'';
     if(p.question)document.getElementById('ai-reply').style.display='block';
+    const key=todayKey(),e=getEnt()[key];
+    if(e){e.aiBody=p.body||'';e.aiQuestion=p.question||'';saveEnt(key,e)}
   }catch{document.getElementById('ai-body').textContent='接続エラーが発生しました。'}
 }
 
@@ -374,7 +563,7 @@ async function sendReply(){
   document.getElementById('ai-body').innerHTML+='<br><br><div class="ai-loading"><span></span><span></span><span></span></div>';
   const sys=`あなたはリンさんのAIメンターです。コーチングで深い気づきを促す。JSONのみ：{"body":"返答（1〜3文）","question":"次の問い（任意）"}`;
   try{
-    const r=await fetch('/api/mentor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:JSON.stringify(aiConv)})});
+    const r=await fetch('/api/mentor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:sys+'\n\n会話ログ（JSON）：\n'+JSON.stringify(aiConv)})});
     const d=await r.json();
     const raw=d.text||'{}';
     aiConv.push({role:'assistant',content:raw});
@@ -384,12 +573,15 @@ async function sendReply(){
     be.innerHTML+=`<br><br>${p.body||''}`;
     document.getElementById('ai-question').textContent=p.question||'';
     if(!p.question)document.getElementById('ai-reply').style.display='none';
+    const key=todayKey(),e=getEnt()[key];
+    if(e){e.aiBody=be.textContent;e.aiQuestion=p.question||'';saveEnt(key,e);await syncEntryToDrive(key)}
   }catch{}
 }
 
-function renderCal(){
+async function renderCal(){
   const now=new Date();
   if(calY===undefined){calY=now.getFullYear();calM=now.getMonth()}
+  await pullMonth(calY,calM);
   document.getElementById('cal-month-label').textContent=`${calY}年${calM+1}月`;
   const ents=getEnt(),cells=document.getElementById('cal-cells');
   cells.innerHTML='';
@@ -433,7 +625,11 @@ function showPopup(k){
 function closePopup(){document.getElementById('popup-bg').classList.remove('show')}
 
 async function renderReport(){
-  const ents=getEnt(),today=new Date(),days=[];
+  const today=new Date();
+  const monthsSpanned=new Set();
+  for(let i=6;i>=0;i--){const d=new Date(today);d.setDate(d.getDate()-i);monthsSpanned.add(d.getFullYear()+'-'+d.getMonth())}
+  for(const ms of monthsSpanned){const[yy,mm]=ms.split('-').map(Number);await pullMonth(yy,mm)}
+  const ents=getEnt(),days=[];
   for(let i=6;i>=0;i--){
     const d=new Date(today);d.setDate(d.getDate()-i);
     const k=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -469,9 +665,9 @@ function renderWC(text){
 async function genWeekly(days){
   const entries=days.filter(d=>d.entry);if(!entries.length)return;
   const summary=entries.map(d=>`${d.day}: ${MOOD[d.entry.mood]?.label||d.entry.mood} — ${d.entry.text.slice(0,80)}`).join('\n');
-  const sys=`あなたはリンさんのAIメンターです。週次コーチング：価値観・喜びの源泉・繰り返しパターンを拾う。JSONのみ：{"body":"週次フィードバック（3〜4文）","question":"問いかけ1文"}`;
+  const sys=`あなたはリンさんの個人ジャーナルのAIメンターです。コーチングスタンスで、今週の日記から価値観・喜びの源泉・繰り返しパターンを拾ってください。薄い共感は使わない。短く鋭く。JSONのみで返答：{"body":"週次フィードバック（3〜4文）","question":"問いかけ1文"}\n\n今週の日記：\n${summary}`;
   try{
-    const r=await fetch('/api/mentor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:JSON.stringify(aiConv)})});
+    const r=await fetch('/api/mentor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:sys})});
     const d=await r.json();
     const raw=d.text||'{}';
     let p;try{p=JSON.parse(raw.replace(/```json|```/g,'').trim())}catch{p={body:raw,question:''}}
