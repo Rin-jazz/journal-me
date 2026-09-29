@@ -38,22 +38,26 @@ module.exports = async function handler(req, res) {
 
   const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+  const PRIMARY_MODEL = 'gemini-3.8-flash';
+  const FALLBACK_MODEL = 'gemini-3.6-flash';
+
   try {
     let text;
     try {
-      text = await callGemini('gemini-3.6-flash');
+      text = await callGemini(PRIMARY_MODEL);
     } catch (e1) {
       // 一時的な混雑（overloaded/高需要）なら少し待って1回だけ再試行
       if (/overload|high demand|503|429/i.test(e1.message)) {
         await sleep(1500);
         try {
-          text = await callGemini('gemini-3.6-flash');
+          text = await callGemini(PRIMARY_MODEL);
         } catch (e2) {
           // それでもダメなら別モデルに切り替えて最後の再試行
-          text = await callGemini('gemini-2.5-flash');
+          text = await callGemini(FALLBACK_MODEL);
         }
       } else {
-        throw e1;
+        // モデル廃止など一時的でないエラーの場合は、別モデルで即座に再試行
+        text = await callGemini(FALLBACK_MODEL);
       }
     }
     res.status(200).json({ text });
