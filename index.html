@@ -124,8 +124,8 @@ body{background:linear-gradient(160deg,var(--grad-start) 0%,var(--grad-mid) 50%,
 .report-header .sub{font-size:11px;color:var(--text-on-grad-sub);margin-top:5px;font-weight:300;letter-spacing:0.08em}
 
 /* ワードクラウド */
-.wordcloud{display:flex;flex-wrap:wrap;gap:7px;align-items:center;min-height:90px;padding:4px 0}
-.wc-bubble{display:flex;align-items:center;justify-content:center;border-radius:50%;cursor:default;flex-shrink:0;font-family:var(--font)}
+.wordcloud{display:flex;flex-wrap:wrap;gap:8px;align-items:center;min-height:60px;padding:4px 0}
+.wc-bubble{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;cursor:default;flex-shrink:0;font-family:var(--font);white-space:nowrap;padding:0 14px;line-height:1;box-sizing:border-box}
 .wc-bubble:nth-child(3n+1){background:rgba(192,96,160,0.12);border:1px solid rgba(192,96,160,0.25);color:var(--accent)}
 .wc-bubble:nth-child(3n+2){background:rgba(224,112,96,0.12);border:1px solid rgba(224,112,96,0.25);color:var(--coral)}
 .wc-bubble:nth-child(3n){background:rgba(200,168,220,0.2);border:1px solid rgba(200,168,220,0.4);color:#906080}
@@ -724,14 +724,16 @@ async function renderReport(){
 
 function renderKeywordCloud(keywords){
   const el=document.getElementById('wordcloud');
-  if(!keywords||!keywords.length){el.innerHTML='<div class="empty">まだデータがありません</div>';return}
-  const sorted=keywords.filter(k=>k&&k.word).sort((a,b)=>(b.weight||1)-(a.weight||1)).slice(0,14);
-  const max=sorted[0].weight||1,min=sorted[sorted.length-1].weight||1;
+  const clean=(keywords||[])
+    .filter(k=>k&&k.word)
+    .map(k=>({word:k.word.length>12?k.word.slice(0,12)+'…':k.word,weight:k.weight||1}));
+  if(!clean.length){el.innerHTML='<div class="empty">まだデータがありません</div>';return}
+  const sorted=clean.sort((a,b)=>b.weight-a.weight).slice(0,14);
+  const max=sorted[0].weight,min=sorted[sorted.length-1].weight;
   el.innerHTML=sorted.map(k=>{
-    const w=k.weight||1;
-    const r=(w-min)/Math.max(max-min,1);
-    const sz=Math.round(34+r*38);const fs=Math.round(11+r*9);const op=(0.65+r*0.35).toFixed(2);
-    return`<span class="wc-bubble" style="width:${sz}px;height:${sz}px;font-size:${fs}px;opacity:${op}">${k.word}</span>`;
+    const r=(k.weight-min)/Math.max(max-min,1);
+    const fs=Math.round(12+r*8);const ht=Math.round(28+r*12);const op=(0.7+r*0.3).toFixed(2);
+    return`<span class="wc-bubble" style="height:${ht}px;font-size:${fs}px;opacity:${op}">${k.word}</span>`;
   }).join('');
 }
 
@@ -739,7 +741,7 @@ function renderKeywordCloud(keywords){
 function renderWC(text){
   const stop=new Set(['は','が','を','に','で','の','と','も','だ','た','て','い','な','か','し','れ','ら','こ','あ','ん','う','え','お','そ','さ','せ','す','って','から','ため','という','など','また','でも','ので','ます','です','ました','した','ない','する','ある','いる','いた','なる','なった','なって','思う','思い','思った','今日','今週','今','自分','こと','もの','とき']);
   const freq={};
-  text.replace(/[、。！？\n\r]/g,' ').split(/[\s　]+/).forEach(w=>{w=w.trim();if(w.length>=2&&!stop.has(w))freq[w]=(freq[w]||0)+1});
+  text.replace(/[、。！？\n\r]/g,' ').split(/[\s　]+/).forEach(w=>{w=w.trim();if(w.length>=2&&w.length<=8&&!stop.has(w))freq[w]=(freq[w]||0)+1});
   const sorted=Object.entries(freq).sort((a,b)=>b[1]-a[1]).slice(0,14).map(([word,c])=>({word,weight:c}));
   renderKeywordCloud(sorted);
 }
